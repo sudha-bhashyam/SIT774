@@ -22,6 +22,8 @@ app.use(session({
   saveUninitialized: true
 }));
 
+
+
 // Home route - serve index.html
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public_html', 'index.html'));
