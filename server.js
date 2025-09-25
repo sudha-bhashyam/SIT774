@@ -9,23 +9,24 @@ const otpManager = require('./otpManager');
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;   // <-- use env PORT
 
 // Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static('public_html')); // Serves static files like HTML, CSS, JS
 
-// Session configuration
+// Session configuration (ensure a secret exists)
 app.use(session({
-  secret: process.env.SESSION_SECRET,
+  secret: process.env.SESSION_SECRET || 'dev-session-secret', // safe default for local
   resave: false,
   saveUninitialized: true
 }));
 
-
+// Simple health endpoint for CI/CD probes
+app.get('/health', (_req, res) => res.status(200).send('OK'));
 
 // Home route - serve index.html
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public_html', 'index.html'));
 });
 
@@ -59,3 +60,5 @@ app.post('/verify-otp', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
+
+module.exports = app; // optional export (handy if you later write supertest-based tests)
