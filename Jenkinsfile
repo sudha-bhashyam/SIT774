@@ -1,10 +1,8 @@
 pipeline {
   agent any
-  options { skipDefaultCheckout(true); timestamps() }
+  options { timestamps() }
   environment {
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
-    PROD_PORT = '4000'
-    NOTIFY_EMAIL = ''  // optional: set an email here to get alerts
   }
 
   stages {
@@ -23,17 +21,18 @@ pipeline {
           npm -v
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
           mkdir -p dist
-          rm -rf .pack && mkdir .pack
-          rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
-          SHORT_COMMIT=$(git rev-parse --short HEAD || echo local)
-          TAR="dist/sit774-nodeapp-${SHORT_COMMIT}.tar.gz"
+          rm -rf .pack
+          mkdir .pack
+          rsync -a --exclude .git --exclude dist --exclude node_modules . .pack/
+          SHORT_COMMIT=$(git rev-parse --short HEAD)
+          TAR=dist/sit774-nodeapp-${SHORT_COMMIT}.tar.gz
           tar -czf "$TAR" -C .pack .
           echo "Built artefact: $TAR"
         '''
       }
     }
 
-    stage('Test (Unit)') {
+    stage('Test') {
       steps {
         sh '''
           set -eux
@@ -44,7 +43,9 @@ pipeline {
         '''
       }
       post {
-        always { junit 'reports/*.xml' }
+        always {
+          junit 'reports/*.xml'
+        }
       }
     }
 
@@ -59,8 +60,8 @@ pipeline {
       }
       post {
         always {
-          junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-          archiveArtifacts artifacts: 'reports/jscpd/*.xml', fingerprint: true, allowEmptyArchive: true
+          junit allowEmptyResults: true, testResults: 'reports/**/*.xml'
+          archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
         }
       }
     }
@@ -88,13 +89,30 @@ pipeline {
 }
 
 
-    
+    stage('Deploy (Staging)') {
+      steps {
+        echo 'Deploy'
+      }
+    }
 
-   
-    
+    stage('Release (Prod)') {
+      when { branch 'main' }
+      steps {
+        echo 'Release'
+      }
+    }
+
+    stage('Monitoring & Alerts') {
+      steps {
+        echo 'Monitoring'
+      }
+    }
+  }
 
   post {
-    success { archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true }
-    always { echo 'Pipeline finished.' }
+    always {
+      echo 'Pipeline finished.'
+      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true
+    }
   }
 }
