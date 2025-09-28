@@ -89,11 +89,63 @@ pipeline {
 }
 
 
-    stage('Deploy (Staging)') {
-      steps {
-        echo 'Deploy'
-      }
+  stage('Deploy (Staging)') {
+  steps {
+    sh '''
+      set -eux
+      export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+
+      # Clean any previous compose stack, then build+run
+      docker compose down -v || true
+      docker compose up -d --build
+
+      # Wait until app responds
+      for i in $(seq 1 60); do
+        if curl -fsS http://127.0.0.1:3000/health >/dev/null; then
+          echo "App is up on :3000"
+          break
+        fi
+        sleep 1
+      done
+
+      # Confirm once more (fail if not up)
+      curl -fsS http://127.0.0.1:3000/health >/dev/null
+
+      # Save logs for troubleshooting
+      docker compose logs --no-color > app.log || true
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'app.log', fingerprint: true, allowEmptyArchive: true
+      sh 'docker compose ps || true'
     }
+  }
+}
+
+stage('Integration Test (Staging)') {
+  steps {
+    sh '''
+      set -eux
+      # Simple black-box check against the running container
+      curl -fsS http://127.0.0.1:3000/health | tee reports/deploy-health.json
+      # Optionally assert body contains {"status":"ok"}
+      node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('reports/deploy-health.json','utf8')); if(d.status!=='ok'){process.exit(1)}"
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/deploy-health.json', allowEmptyArchive: false
+    }
+  }
+}
+
+stage('Cleanup (Staging)') {
+  steps {
+    sh 'docker compose down -v || true'
+  }
+}
+
 
     stage('Release (Prod)') {
       when { branch 'main' }
