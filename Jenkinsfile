@@ -18,8 +18,15 @@ pipeline {
           set -eux
           node -v
           npm -v
+
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
-          if npm run | grep -q "build"; then npm run build; else echo "No build script"; fi
+
+          if npm run | grep -q "build"; then
+            npm run build
+          else
+            echo "No build script"
+          fi
+
           mkdir -p dist
           rm -rf .pack && mkdir .pack
           rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
@@ -38,7 +45,7 @@ pipeline {
           mkdir -p reports
           export JEST_JUNIT_OUTPUT_DIR=reports
           export JEST_JUNIT_OUTPUT_NAME=junit.xml
-          npx jest --ci --reporters=default --reporters=jest-junit
+          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/.*\\.test\\.js"
         '''
       }
       post {
@@ -67,9 +74,7 @@ pipeline {
     }
 
     stage('Release (Prod)') {
-      when {
-        branch 'main'
-      }
+      when { branch 'main' }
       steps {
         echo 'Release'
       }
