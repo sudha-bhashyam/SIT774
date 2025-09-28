@@ -64,20 +64,32 @@ pipeline {
   }
   post {
     always {
-      // ESLint JUnit file may not exist on some runs; don't warn loudly
       junit testResults: 'reports/eslint-junit.xml', allowEmptyResults: true
       archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
       script {
-        if (fileExists('reports/quality-gate.FAILURE')) {
-          error 'Quality gate failed.'
-        } else if (fileExists('reports/quality-gate.UNSTABLE')) {
-          currentBuild.result = 'UNSTABLE'
-          echo 'Marked build UNSTABLE due to quality gates.'
-        } else {
-          echo 'Quality gates passed.'
-        }
+  def gateStatusFile = 'reports/quality-gate.status'
+  if (fileExists(gateStatusFile)) {
+    def gate = readFile(gateStatusFile).trim()
+    if (gate == 'FAIL') {
+      error 'Quality gates failed'
+    } else if (gate == 'UNSTABLE') {
+      currentBuild.result = 'UNSTABLE'
+      echo 'Marked UNSTABLE due to quality gates.'
+    } else {
+      echo 'Quality gates passed.'
+      // If a previous stage set UNSTABLE, reset to SUCCESS on pass:
+      if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
+        currentBuild.result = 'SUCCESS'
       }
     }
+  } else {
+    echo 'No gate status file, assuming PASS.'
+    if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
+      currentBuild.result = 'SUCCESS'
+    }
+  }
+}
+
   }
 }
 
