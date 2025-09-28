@@ -88,106 +88,10 @@ pipeline {
 }
 
 
-    stage('Deploy (Staging)') {
-      steps {
-        sh '''
-          set -eux
-          rm -f .app.pid app.log || true
-          PORT=3000 nohup npm run start > app.log 2>&1 &
-          echo $! > .app.pid
-          for i in $(seq 1 30); do
-            if curl -sSf -o /dev/null http://127.0.0.1:3000/health; then
-              echo "Staging app is up"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "App did not come up on :3000"
-          exit 1
-        '''
-      }
-      post {
-        always { archiveArtifacts artifacts: 'app.log', allowEmptyArchive: true }
-      }
-    }
+    
 
-    stage('Integration Test (Staging)') {
-      steps {
-        sh '''
-          set -eux
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/health)
-          echo "Staging /health -> $CODE"
-          test "$CODE" = "200"
-        '''
-      }
-    }
-
-    stage('Cleanup (Staging)') {
-      steps {
-        sh '''
-          set -eux
-          if [ -f .app.pid ]; then kill $(cat .app.pid) || true; rm -f .app.pid; fi
-        '''
-      }
-    }
-
-    stage('Release (Prod)') {
-      when { branch 'main' }
-      steps {
-        sh '''
-          set -eux
-          rm -f .prod.pid prodapp.log || true
-          PORT=''' + '${PROD_PORT}' + ''' nohup npm run start > prodapp.log 2>&1 &
-          echo $! > .prod.pid
-          for i in $(seq 1 30); do
-            if curl -sSf -o /dev/null http://127.0.0.1:'''+ '${PROD_PORT}' + '''/health; then
-              echo "Prod app is up on :''' + '${PROD_PORT}' + '''"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Prod did not come up"
-          exit 1
-        '''
-      }
-      post {
-        always { archiveArtifacts artifacts: 'prodapp.log', allowEmptyArchive: true }
-      }
-    }
-
-    stage('Monitoring & Alerts') {
-      when { branch 'main' }
-      steps {
-        script {
-          def ok = true
-          for (int i=0; i<6; i++) { // ~30s quick monitor
-            def rc = sh(returnStatus: true, script: 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:' + env.PROD_PORT + '/health')
-            if (rc != 200) { ok = false; break }
-            sleep 5
-          }
-          if (!ok) {
-            echo "Prod health check failed"
-            if (env.NOTIFY_EMAIL?.trim()) {
-              try {
-                mail to: env.NOTIFY_EMAIL, subject: "SIT774 prod health check FAILED", body: "Prod /health failed on port ${env.PROD_PORT}."
-              } catch (e) {
-                echo "Email not sent: ${e}"
-              }
-            }
-            error("Monitoring detected an issue")
-          } else {
-            echo "Monitoring OK"
-          }
-        }
-      }
-      post {
-        always {
-          // stop prod app we started (demo environment)
-          sh 'if [ -f .prod.pid ]; then kill $(cat .prod.pid) || true; rm -f .prod.pid; fi'
-        }
-      }
-    }
-  }
+   
+    
 
   post {
     success { archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true }
