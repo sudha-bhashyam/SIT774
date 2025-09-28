@@ -3,7 +3,10 @@ pipeline {
   options { skipDefaultCheckout(true); timestamps() }
   environment {
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
+    PROD_PORT = '4000'
+    NOTIFY_EMAIL = ''  // optional: set an email here to get alerts
   }
+
   stages {
     stage('Checkout') {
       steps {
@@ -18,15 +21,7 @@ pipeline {
           set -eux
           node -v
           npm -v
-
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
-
-          if npm run | grep -q "build"; then
-            npm run build
-          else
-            echo "No build script"
-          fi
-
           mkdir -p dist
           rm -rf .pack && mkdir .pack
           rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
@@ -38,70 +33,168 @@ pipeline {
       }
     }
 
-    stage('Test') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      export JEST_JUNIT_OUTPUT_DIR=reports
-      export JEST_JUNIT_OUTPUT_NAME=junit.xml
-      npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
-    '''
-  }
-  post {
-    always {
-      junit 'reports/*.xml'
+    stage('Test (Unit)') {
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          export JEST_JUNIT_OUTPUT_DIR=reports
+          export JEST_JUNIT_OUTPUT_NAME=junit.xml
+          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
+        '''
+      }
+      post {
+        always { junit 'reports/*.xml' }
+      }
     }
-  }
-}
 
-   stage('Code Quality') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      npm run lint
-      npm run dup || true
-    '''
-    // ESLint JUnit -> shows up under "Test Result"
-    junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-
-    // jscpd XML -> archive so you can download / review
-    archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
-  }
-}
+    stage('Code Quality') {
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          npm run lint
+          npm run dup
+        '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+          archiveArtifacts artifacts: 'reports/jscpd/*.xml', fingerprint: true, allowEmptyArchive: true
+        }
+      }
+    }
 
     stage('Security') {
       steps {
-        echo 'Security'
+        sh '''
+          set -eux
+          mkdir -p reports
+          npm run sec_audit
+          node -e '\
+            const fs=require("fs");\
+            const p="reports/npm-audit.json";\
+            if(!fs.existsSync(p)){console.log("no audit json");process.exit(0)}\
+            const d=JSON.parse(fs.readFileSync(p,"utf8"));\
+            const m=(d.metadata && d.metadata.vulnerabilities)||{};\
+            const sum={low:m.low||0,moderate:m.moderate||0,high:m.high||0,critical:m.critical||0};\
+            console.log("VULN SUMMARY", sum);\
+            if((sum.high||0)+(sum.critical||0)>0){\
+              console.error("Failing due to high/critical vulnerabilities");\
+              process.exit(1);\
+            }'
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'reports/npm-audit.json', allowEmptyArchive: true
+        }
       }
     }
 
     stage('Deploy (Staging)') {
       steps {
-        echo 'Deploy'
+        sh '''
+          set -eux
+          rm -f .app.pid app.log || true
+          PORT=3000 nohup npm run start > app.log 2>&1 &
+          echo $! > .app.pid
+          for i in $(seq 1 30); do
+            if curl -sSf -o /dev/null http://127.0.0.1:3000/health; then
+              echo "Staging app is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "App did not come up on :3000"
+          exit 1
+        '''
+      }
+      post {
+        always { archiveArtifacts artifacts: 'app.log', allowEmptyArchive: true }
+      }
+    }
+
+    stage('Integration Test (Staging)') {
+      steps {
+        sh '''
+          set -eux
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/health)
+          echo "Staging /health -> $CODE"
+          test "$CODE" = "200"
+        '''
+      }
+    }
+
+    stage('Cleanup (Staging)') {
+      steps {
+        sh '''
+          set -eux
+          if [ -f .app.pid ]; then kill $(cat .app.pid) || true; rm -f .app.pid; fi
+        '''
       }
     }
 
     stage('Release (Prod)') {
       when { branch 'main' }
       steps {
-        echo 'Release'
+        sh '''
+          set -eux
+          rm -f .prod.pid prodapp.log || true
+          PORT=''' + '${PROD_PORT}' + ''' nohup npm run start > prodapp.log 2>&1 &
+          echo $! > .prod.pid
+          for i in $(seq 1 30); do
+            if curl -sSf -o /dev/null http://127.0.0.1:'''+ '${PROD_PORT}' + '''/health; then
+              echo "Prod app is up on :''' + '${PROD_PORT}' + '''"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Prod did not come up"
+          exit 1
+        '''
+      }
+      post {
+        always { archiveArtifacts artifacts: 'prodapp.log', allowEmptyArchive: true }
       }
     }
 
     stage('Monitoring & Alerts') {
+      when { branch 'main' }
       steps {
-        echo 'Monitoring'
+        script {
+          def ok = true
+          for (int i=0; i<6; i++) { // ~30s quick monitor
+            def rc = sh(returnStatus: true, script: 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:' + env.PROD_PORT + '/health')
+            if (rc != 200) { ok = false; break }
+            sleep 5
+          }
+          if (!ok) {
+            echo "Prod health check failed"
+            if (env.NOTIFY_EMAIL?.trim()) {
+              try {
+                mail to: env.NOTIFY_EMAIL, subject: "SIT774 prod health check FAILED", body: "Prod /health failed on port ${env.PROD_PORT}."
+              } catch (e) {
+                echo "Email not sent: ${e}"
+              }
+            }
+            error("Monitoring detected an issue")
+          } else {
+            echo "Monitoring OK"
+          }
+        }
+      }
+      post {
+        always {
+          // stop prod app we started (demo environment)
+          sh 'if [ -f .prod.pid ]; then kill $(cat .prod.pid) || true; rm -f .prod.pid; fi'
+        }
       }
     }
   }
+
   post {
-    success {
-      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true
-    }
-    always {
-      echo 'Pipeline finished.'
-    }
+    success { archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true }
+    always { echo 'Pipeline finished.' }
   }
 }
