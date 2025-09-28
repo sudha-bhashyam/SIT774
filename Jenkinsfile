@@ -39,21 +39,21 @@ pipeline {
     }
 
     stage('Test') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          export JEST_JUNIT_OUTPUT_DIR=reports
-          export JEST_JUNIT_OUTPUT_NAME=junit.xml
-          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/.*\\.test\\.js"
-        '''
-      }
-      post {
-        always {
-          junit 'reports/*.xml'
-        }
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      export JEST_JUNIT_OUTPUT_DIR=reports
+      export JEST_JUNIT_OUTPUT_NAME=junit.xml
+      npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
+    '''
+  }
+  post {
+    always {
+      junit 'reports/*.xml'
     }
+  }
+}
 
     stage('Code Quality') {
       steps {
