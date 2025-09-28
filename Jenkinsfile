@@ -66,31 +66,27 @@ pipeline {
     }
 
     stage('Security') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          npm run sec_audit
-          node -e '\
-            const fs=require("fs");\
-            const p="reports/npm-audit.json";\
-            if(!fs.existsSync(p)){console.log("no audit json");process.exit(0)}\
-            const d=JSON.parse(fs.readFileSync(p,"utf8"));\
-            const m=(d.metadata && d.metadata.vulnerabilities)||{};\
-            const sum={low:m.low||0,moderate:m.moderate||0,high:m.high||0,critical:m.critical||0};\
-            console.log("VULN SUMMARY", sum);\
-            if((sum.high||0)+(sum.critical||0)>0){\
-              console.error("Failing due to high/critical vulnerabilities");\
-              process.exit(1);\
-            }'
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'reports/npm-audit.json', allowEmptyArchive: true
-        }
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      # 1) Dependency audit (JSON)
+      npm run sec_audit
+      # 2) Retire.js (JSON)
+      npm run sec_retire
+      # 3) Summarize -> Markdown + exit 1 on High/Critical
+      node tools/security-summary.js
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/npm-audit.json', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'reports/retire.json', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'reports/security-summary.md', allowEmptyArchive: true
     }
+  }
+}
+
 
     stage('Deploy (Staging)') {
       steps {
