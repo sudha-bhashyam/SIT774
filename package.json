@@ -7,9 +7,8 @@
     "start": "node server.js",
     "test": "jest --ci",
     "lint": "eslint . --ext .js --format junit -o reports/eslint-junit.xml || true",
-    "dup": "jscpd --pattern \"**/*.js\" --exclude \"**/node_modules/**\" --exclude \"**/dist/**\" --exclude \"**/.pack/**\" --exclude \"**/reports/**\" --reporters junit --output reports/jscpd --silent || true"
+    "dup": "jscpd --pattern \"**/*.js\" --exclude \"**/node_modules/**\" --exclude \"**/dist/**\" --exclude \"**/.pack/**\" --exclude \"**/reports/**\" --reporters xml --output reports/jscpd || true"
   },
-  "dependencies": {},
   "devDependencies": {
     "eslint": "^9.36.0",
     "eslint-junit": "^1.0.1",
