@@ -23,7 +23,7 @@
       "\"/.pack/\""
     ],
     "testMatch": [
-      "\"**/__tests__/smoke.test.js\""
+      "\"**/__tests__/**/*.test.js\""
     ]
   }
 }
