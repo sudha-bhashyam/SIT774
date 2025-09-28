@@ -50,21 +50,38 @@ pipeline {
     }
 
     stage('Code Quality') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          npm run lint
-          npm run dup
-        '''
-      }
-      post {
-        always {
-          junit allowEmptyResults: true, testResults: 'reports/**/*.xml'
-          archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      npm run lint
+      npm run lint:json
+      npm run dup
+      npm run dup:json
+      node tools/quality-gates.js || echo QUALITY_FAIL=1 > reports/QUALITY_FAIL
+    '''
+  }
+  post {
+    always {
+      // ESLint (JUnit) so it shows nicely in Jenkins
+      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+      // Archive raw reports for evidence
+      archiveArtifacts artifacts: 'reports/eslint.json, reports/jscpd/jscpd-report.json, reports/jscpd/jscpd-report.xml', allowEmptyArchive: true, fingerprint: true
+
+      // Mark UNSTABLE if threshold breach (non-fatal)
+      script {
+        if (fileExists('reports/QUALITY_UNSTABLE')) {
+          currentBuild.result = 'UNSTABLE'
+          echo 'Marked build UNSTABLE due to quality gates.'
+        }
+        if (fileExists('reports/QUALITY_FAIL')) {
+          error('Quality gate failure — see logs.')
         }
       }
     }
+  }
+}
+
 
     stage('Security') {
   steps {
