@@ -5,14 +5,18 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "jest --ci"
+    "test": "jest --ci",
+    "lint": "eslint . --ext .js --format junit -o reports/eslint-junit.xml || true",
+    "dup": "jscpd --pattern \"**/*.js\" --exclude \"**/node_modules/**\" --exclude \"**/dist/**\" --exclude \"**/.pack/**\" --exclude \"**/reports/**\" --reporters junit --output reports/jscpd --silent || true"
   },
   "dependencies": {},
   "devDependencies": {
     "eslint": "^9.36.0",
     "eslint-junit": "^1.0.1",
+    "eslint-plugin-sonarjs": "^3.0.5",
     "jest": "^29.7.0",
-    "jest-junit": "^16.0.0"
+    "jest-junit": "^16.0.0",
+    "jscpd": "^4.0.5"
   },
   "jest": {
     "testEnvironment": "node",
