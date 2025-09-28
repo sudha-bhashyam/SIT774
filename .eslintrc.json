@@ -6,7 +6,6 @@
   "rules": {
     "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "no-console": "off",
-
     "complexity": ["warn", 10],
     "max-depth": ["warn", 3],
     "max-nested-callbacks": ["warn", 3],
