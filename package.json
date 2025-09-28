@@ -7,6 +7,7 @@
     "start": "node server.js",
     "test": "jest --ci"
   },
+  "dependencies": {},
   "devDependencies": {
     "jest": "^29.7.0",
     "jest-junit": "^16.0.0"
@@ -18,12 +19,12 @@
       "jest-junit"
     ],
     "testPathIgnorePatterns": [
-      "\"/node_modules/\"",
-      "\"/dist/\"",
-      "\"/.pack/\""
+      "/node_modules/",
+      "/dist/",
+      "/.pack/"
     ],
     "testMatch": [
-      "\"**/__tests__/**/*.test.js\""
+      "**/__tests__/**/*.test.js"
     ]
   }
 }
