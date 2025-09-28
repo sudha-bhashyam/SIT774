@@ -56,10 +56,19 @@ pipeline {
 }
 
     stage('Code Quality') {
-      steps {
-        echo 'Code Quality'
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      npm run lint
+    '''
+  }
+  post {
+    always {
+      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
     }
+  }
+}
 
     stage('Security') {
       steps {
