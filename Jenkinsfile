@@ -50,48 +50,48 @@ pipeline {
     }
 
     stage('Code Quality') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      rm -f reports/quality-gate.*   # clear old markers
-      npm run lint || true
-      npm run lint:json || true
-      npm run dup || true
-      npm run dup:json || true
-      node tools/quality-gates.js || true
-    '''
-  }
-  post {
-    always {
-      junit testResults: 'reports/eslint-junit.xml', allowEmptyResults: true
-      archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
-      script {
-  def gateStatusFile = 'reports/quality-gate.status'
-  if (fileExists(gateStatusFile)) {
-    def gate = readFile(gateStatusFile).trim()
-    if (gate == 'FAIL') {
-      error 'Quality gates failed'
-    } else if (gate == 'UNSTABLE') {
-      currentBuild.result = 'UNSTABLE'
-      echo 'Marked UNSTABLE due to quality gates.'
-    } else {
-      echo 'Quality gates passed.'
-      // If a previous stage set UNSTABLE, reset to SUCCESS on pass:
-      if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
-        currentBuild.result = 'SUCCESS'
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          rm -f reports/quality-gate.*
+          npm run lint || true
+          npm run lint:json || true
+          npm run dup || true
+          npm run dup:json || true
+          node tools/quality-gates.js
+        '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+          archiveArtifacts allowEmptyArchive: true, fingerprint: true,
+            artifacts: 'reports/jscpd/jscpd-report.xml, reports/jscpd/jscpd-report.json, reports/eslint.json, reports/eslint-junit.xml'
+          script {
+            def gateStatusFile = 'reports/quality-gate.status'
+            if (fileExists(gateStatusFile)) {
+              def gate = readFile(gateStatusFile).trim()
+              if (gate == 'FAIL') {
+                error 'Quality gates failed'
+              } else if (gate == 'UNSTABLE') {
+                currentBuild.result = 'UNSTABLE'
+                echo 'Marked UNSTABLE due to quality gates.'
+              } else {
+                echo 'Quality gates passed.'
+                if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
+                  currentBuild.result = 'SUCCESS'
+                }
+              }
+            } else {
+              echo 'No gate status file, assuming PASS.'
+              if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
+                currentBuild.result = 'SUCCESS'
+              }
+            }
+          }
+        }
       }
     }
-  } else {
-    echo 'No gate status file, assuming PASS.'
-    if (!currentBuild.result || currentBuild.result == 'UNSTABLE') {
-      currentBuild.result = 'SUCCESS'
-    }
-  }
-}
-
-  }
-}
 
 
 
