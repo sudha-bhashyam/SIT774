@@ -11,6 +11,7 @@ pipeline {
         echo "Checked out ${env.BRANCH_NAME} @ ${env.GIT_COMMIT}"
       }
     }
+
     stage('Build') {
       steps {
         sh '''
@@ -29,30 +30,63 @@ pipeline {
         '''
       }
     }
+
     stage('Test') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      export JEST_JUNIT_OUTPUT_DIR=reports
-      export JEST_JUNIT_OUTPUT_NAME=junit.xml
-      npx jest --ci --reporters=default --reporters=jest-junit
-    '''
-  }
-  post {
-    always {
-      junit 'reports/*.xml'
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          export JEST_JUNIT_OUTPUT_DIR=reports
+          export JEST_JUNIT_OUTPUT_NAME=junit.xml
+          npx jest --ci --reporters=default --reporters=jest-junit
+        '''
+      }
+      post {
+        always {
+          junit 'reports/*.xml'
+        }
+      }
+    }
+
+    stage('Code Quality') {
+      steps {
+        echo 'Code Quality'
+      }
+    }
+
+    stage('Security') {
+      steps {
+        echo 'Security'
+      }
+    }
+
+    stage('Deploy (Staging)') {
+      steps {
+        echo 'Deploy'
+      }
+    }
+
+    stage('Release (Prod)') {
+      when {
+        branch 'main'
+      }
+      steps {
+        echo 'Release'
+      }
+    }
+
+    stage('Monitoring & Alerts') {
+      steps {
+        echo 'Monitoring'
+      }
     }
   }
-}
-    stage('Code Quality') { steps { echo 'Code Quality' } }
-    stage('Security') { steps { echo 'Security' } }
-    stage('Deploy (Staging)') { steps { echo 'Deploy' } }
-    stage('Release (Prod)') { when { branch 'main' } steps { echo 'Release' } }
-    stage('Monitoring & Alerts') { steps { echo 'Monitoring' } }
-  }
   post {
-    success { archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true }
-    always { echo 'Pipeline finished.' }
+    success {
+      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true
+    }
+    always {
+      echo 'Pipeline finished.'
+    }
   }
 }
