@@ -9,7 +9,7 @@
     "lint": "eslint . --ext .js --format junit -o reports/eslint-junit.xml || true",
     "dup": "jscpd --pattern \"**/*.js\" --ignore \"**/node_modules/**,**/dist/**,**/.pack/**,**/reports/**\" --reporters xml --output reports/jscpd || true",
     "sec_audit": "npm audit --omit=dev --json > reports/npm-audit.json || true",
-    "sec_retire": "npx retire --path . --package --outputformat json --outputpath reports/retire.json || true",
+    "sec_retire": "retire --path . --outputformat json --outputpath reports/retire.json || true",
     "security": "\"npm run sec_audit && npm run sec_retire && node tools/security-summary.js\""
   },
   "devDependencies": {
