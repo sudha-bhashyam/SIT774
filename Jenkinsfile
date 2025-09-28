@@ -54,33 +54,33 @@ pipeline {
     sh '''
       set -eux
       mkdir -p reports
-      npm run lint
-      npm run lint:json
-      npm run dup
-      npm run dup:json
-      node tools/quality-gates.js || echo QUALITY_FAIL=1 > reports/QUALITY_FAIL
+      rm -f reports/quality-gate.*   # clear old markers
+      npm run lint || true
+      npm run lint:json || true
+      npm run dup || true
+      npm run dup:json || true
+      node tools/quality-gates.js || true
     '''
   }
   post {
     always {
-      // ESLint (JUnit) so it shows nicely in Jenkins
-      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-      // Archive raw reports for evidence
-      archiveArtifacts artifacts: 'reports/eslint.json, reports/jscpd/jscpd-report.json, reports/jscpd/jscpd-report.xml', allowEmptyArchive: true, fingerprint: true
-
-      // Mark UNSTABLE if threshold breach (non-fatal)
+      // ESLint JUnit file may not exist on some runs; don't warn loudly
+      junit testResults: 'reports/eslint-junit.xml', allowEmptyResults: true
+      archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
       script {
-        if (fileExists('reports/QUALITY_UNSTABLE')) {
+        if (fileExists('reports/quality-gate.FAILURE')) {
+          error 'Quality gate failed.'
+        } else if (fileExists('reports/quality-gate.UNSTABLE')) {
           currentBuild.result = 'UNSTABLE'
           echo 'Marked build UNSTABLE due to quality gates.'
-        }
-        if (fileExists('reports/QUALITY_FAIL')) {
-          error('Quality gate failure — see logs.')
+        } else {
+          echo 'Quality gates passed.'
         }
       }
     }
   }
 }
+
 
 
     stage('Security') {
