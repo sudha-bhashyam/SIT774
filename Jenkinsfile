@@ -55,18 +55,19 @@ pipeline {
   }
 }
 
-    stage('Code Quality') {
+   stage('Code Quality') {
   steps {
     sh '''
       set -eux
       mkdir -p reports
       npm run lint
+      npm run dup || true
     '''
-  }
-  post {
-    always {
-      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-    }
+    // ESLint JUnit -> shows up under "Test Result"
+    junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+
+    // jscpd XML -> archive so you can download / review
+    archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
   }
 }
 
