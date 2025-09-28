@@ -10,7 +10,9 @@
     "dup": "jscpd --pattern \"**/*.js\" --ignore \"**/node_modules/**,**/dist/**,**/.pack/**,**/reports/**\" --reporters xml --output reports/jscpd || true",
     "sec_audit": "npm audit --omit=dev --json > reports/npm-audit.json || true",
     "sec_retire": "retire --path . --outputformat json --outputpath reports/retire.json || true",
-    "security": "\"npm run sec_audit && npm run sec_retire && node tools/security-summary.js\""
+    "security": "\"npm run sec_audit && npm run sec_retire && node tools/security-summary.js\"",
+    "lint:json": "eslint . --ext .js -f json -o reports/eslint.json || true",
+    "dup:json": "jscpd --pattern \"**/*.js\" --ignore \"**/node_modules/**,**/dist/**,**/reports/**\" --reporters json --output reports/jscpd || true"
   },
   "devDependencies": {
     "eslint": "^8.57.1",
