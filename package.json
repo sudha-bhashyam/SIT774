@@ -1,35 +1,29 @@
 {
-  "name": "otp-login",
+  "name": "sit774-app",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "body-parser": "^2.2.0",
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "express-session": "^1.18.1",
-    "nodemailer": "^7.0.3"
-  }
-  
-}
-
-{
+  "private": true,
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "echo \"(Node server) nothing to compile\"",
-    "test": "jest --runInBand",
-    "pretest": "PORT=3000 node server.js & echo $! > .pid && sleep 1",
-    "posttest": "kill -9 $(cat .pid) 2>/dev/null || true"
+    "test": "jest --ci"
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "eslint": "^9.12.0"
+    "jest-junit": "^16.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "reporters": [
+      "default",
+      "jest-junit"
+    ],
+    "testPathIgnorePatterns": [
+      "\"/node_modules/\"",
+      "\"/dist/\"",
+      "\"/.pack/\""
+    ],
+    "testMatch": [
+      "\"**/__tests__/**/*.test.js\""
+    ]
   }
 }
-
