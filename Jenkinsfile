@@ -29,7 +29,22 @@ pipeline {
         '''
       }
     }
-    stage('Test') { steps { echo 'Test' } }
+    stage('Test') {
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      export JEST_JUNIT_OUTPUT_DIR=reports
+      export JEST_JUNIT_OUTPUT_NAME=junit.xml
+      npx jest --ci --reporters=default --reporters=jest-junit
+    '''
+  }
+  post {
+    always {
+      junit 'reports/*.xml'
+    }
+  }
+}
     stage('Code Quality') { steps { echo 'Code Quality' } }
     stage('Security') { steps { echo 'Security' } }
     stage('Deploy (Staging)') { steps { echo 'Deploy' } }
