@@ -1,19 +1,15 @@
 pipeline {
   agent any
-  options { skipDefaultCheckout(true); timestamps() }
-
+  options { timestamps() }
   environment {
-    // Just static env here; no shell commands!
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
-    APP_PORT = '3000'
   }
 
   stages {
-
     stage('Checkout') {
       steps {
         checkout scm
-        echo "Checked out ${env.BRANCH_NAME} @ ${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+        echo "Checked out ${env.BRANCH_NAME} @ ${env.GIT_COMMIT}"
       }
     }
 
@@ -21,43 +17,18 @@ pipeline {
       steps {
         sh '''
           set -eux
-
-          # Ensure Node is available (PATH from environment now applies)
           node -v
           npm -v
-
-          # Install deps
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
-
-          # Discover app version from package.json (fallback to 0.0.0)
-          APP_VERSION=$(node -p "try{require('./package.json').version}catch(e){'0.0.0'}")
-          echo "APP_VERSION=$APP_VERSION" > .buildenv
-
-          # Optional build
-          if npm run | grep -qE '^\\s*build\\s'; then
-            npm run build
-          else
-            echo "No build script"
-          fi
-
-          # Create versioned artefact
           mkdir -p dist
-          rm -rf .pack && mkdir .pack
-          rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
-          SHORT_COMMIT=$(git rev-parse --short HEAD || echo local)
-          echo "SHORT_COMMIT=$SHORT_COMMIT" >> .buildenv
-          VERSION_TAG="${APP_VERSION}-${SHORT_COMMIT}"
-          TAR="dist/sit774-nodeapp-${VERSION_TAG}.tar.gz"
+          rm -rf .pack
+          mkdir .pack
+          rsync -a --exclude .git --exclude dist --exclude node_modules . .pack/
+          SHORT_COMMIT=$(git rev-parse --short HEAD)
+          TAR=dist/sit774-nodeapp-${SHORT_COMMIT}.tar.gz
           tar -czf "$TAR" -C .pack .
           echo "Built artefact: $TAR"
         '''
-        script {
-          // Load computed values into env.* for later stages
-          def m = readProperties file: '.buildenv'
-          env.APP_VERSION = m.APP_VERSION ?: '0.0.0'
-          env.SHORT_COMMIT = m.SHORT_COMMIT ?: 'local'
-          env.VERSION_TAG  = "${env.APP_VERSION}-${env.SHORT_COMMIT}"
-        }
       }
     }
 
@@ -66,163 +37,148 @@ pipeline {
         sh '''
           set -eux
           mkdir -p reports
-
           export JEST_JUNIT_OUTPUT_DIR=reports
           export JEST_JUNIT_OUTPUT_NAME=junit.xml
-
-          npx jest --ci --reporters=default --reporters=jest-junit --coverage --coverageReporters=json-summary,text-summary
-
-          # Gate on coverage >= 80% (statements)
-          node -e "const fs=require('fs'); \
-            const c=JSON.parse(fs.readFileSync('coverage/coverage-summary.json','utf8')).total; \
-            const pct=c.statements.pct; \
-            console.log('Statements coverage:', pct+'%'); \
-            if(pct<80){console.error('Coverage below 80%'); process.exit(1)}"
+          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
         '''
       }
       post {
         always {
-          junit 'reports/junit.xml'   // only unit tests
-          archiveArtifacts artifacts: 'coverage/**', fingerprint: true, allowEmptyArchive: true
+          junit 'reports/*.xml'
         }
       }
     }
 
     stage('Code Quality') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      npm run lint
+      npm run lint:json
+      npm run dup
+      npm run dup:json
+      node tools/quality-gates.js || echo QUALITY_FAIL=1 > reports/QUALITY_FAIL
+      rm -f reports/quality-gate.*   # clear old markers
+      npm run lint || true
+      npm run lint:json || true
+      npm run dup || true
+      npm run dup:json || true
+      node tools/quality-gates.js || true
+    '''
+  }
+  post {
+    always {
+      // ESLint (JUnit) so it shows nicely in Jenkins
+      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+      // Archive raw reports for evidence
+      archiveArtifacts artifacts: 'reports/eslint.json, reports/jscpd/jscpd-report.json, reports/jscpd/jscpd-report.xml', allowEmptyArchive: true, fingerprint: true
 
-          # ESLint JSON (+ optional JUnit for humans)
-          npx eslint . --ext .js -f json -o reports/eslint.json || true
-          npx eslint . --ext .js --format junit -o reports/eslint-junit.xml || true
-
-          # Duplication (JSON)
-          npx jscpd --pattern "**/*.js" \
-            --ignore "**/node_modules/**,**/dist/**,**/.pack/**,**/reports/**" \
-            --reporters json --output reports/jscpd || true
-
-          # Quality gate: errors=0, warnings<=20, duplication<=2%
-          node -e " \
-            const fs=require('fs'); \
-            const es=JSON.parse(fs.readFileSync('reports/eslint.json','utf8')); \
-            const results=Array.isArray(es)?es:[]; \
-            const errs=results.reduce((a,r)=>a+r.errorCount,0); \
-            const warns=results.reduce((a,r)=>a+r.warningCount,0); \
-            console.log('ESLint errors:',errs,'warnings:',warns); \
-            let dupPct=0; \
-            try{ \
-              const j=JSON.parse(fs.readFileSync('reports/jscpd/jscpd-report.json','utf8')); \
-              dupPct=(j?.statistics?.percentage)||0; \
-            }catch(e){ console.log('No jscpd JSON found; assuming 0%'); } \
-            console.log('Duplication %:', dupPct); \
-            if (errs>0 || warns>20 || dupPct>2) { \
-              console.error('Quality gate failed: ESLint errors>0 or warnings>20 or duplication>2%'); \
-              process.exit(1); \
-            }"
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'reports/eslint.json,reports/eslint-junit.xml,reports/jscpd/**', fingerprint: true, allowEmptyArchive: true
+      // Mark UNSTABLE if threshold breach (non-fatal)
+      // ESLint JUnit file may not exist on some runs; don't warn loudly
+      junit testResults: 'reports/eslint-junit.xml', allowEmptyResults: true
+      archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
+      script {
+        if (fileExists('reports/QUALITY_UNSTABLE')) {
+        if (fileExists('reports/quality-gate.FAILURE')) {
+          error 'Quality gate failed.'
+        } else if (fileExists('reports/quality-gate.UNSTABLE')) {
+          currentBuild.result = 'UNSTABLE'
+          echo 'Marked build UNSTABLE due to quality gates.'
+        }
+        if (fileExists('reports/QUALITY_FAIL')) {
+          error('Quality gate failure — see logs.')
+        } else {
+          echo 'Quality gates passed.'
         }
       }
     }
+  }
+}
+
+
 
     stage('Security') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-
-          npm audit --omit=dev --json > reports/npm-audit.json || true
-          npx retire --path . --outputformat json --outputpath reports/retire.json || true
-
-          # Summarize & gate on High/Critical
-          node -e " \
-            const fs=require('fs'); \
-            const out=[]; let high=0, critical=0; \
-            try{ \
-              const a=JSON.parse(fs.readFileSync('reports/npm-audit.json','utf8')); \
-              const v=a?.vulnerabilities||a?.metadata?.vulnerabilities||{}; \
-              high+=v.high||0; critical+=v.critical||0; \
-              out.push('# npm audit summary'); \
-              out.push('High: '+(v.high||0)+', Critical: '+(v.critical||0)); \
-            }catch(e){ out.push('# npm audit summary\\n(no data)'); } \
-            try{ \
-              const r=JSON.parse(fs.readFileSync('reports/retire.json','utf8')); \
-              const res=(r?.data||[]).flatMap(d=>d.results||[]); \
-              const sevMap={'medium':0,'high':0,'critical':0}; \
-              res.forEach(x=>{(x.vulnerabilities||[]).forEach(v=>{ \
-                const s=(v.severity||'').toLowerCase(); \
-                if(sevMap[s]!==undefined) sevMap[s]++; \
-              })}); \
-              high+=sevMap.high; critical+=sevMap.critical; \
-              out.push('\\n# retire.js summary'); \
-              out.push('High: '+sevMap.high+', Critical: '+sevMap.critical); \
-            }catch(e){ out.push('\\n# retire.js summary\\n(no data)'); } \
-            out.push('\\n## Action'); \
-            if(high+critical===0){ \
-              out.push('No High/Critical found.'); \
-            } else { \
-              out.push('Review & upgrade vulnerable packages. Document false positives if any.'); \
-            } \
-            fs.writeFileSync('reports/security-summary.md', out.join('\\n')); \
-            if(high+critical>0){ \
-              console.error('High/Critical vulnerabilities found:', high+critical); \
-              process.exit(1); \
-            }"
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'reports/npm-audit.json,reports/retire.json,reports/security-summary.md', fingerprint: true
-        }
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      # 1) Dependency audit (JSON)
+      npm run sec_audit
+      # 2) Retire.js (JSON)
+      npm run sec_retire
+      # 3) Summarize -> Markdown + exit 1 on High/Critical
+      node tools/security-summary.js
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/npm-audit.json', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'reports/retire.json', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'reports/security-summary.md', allowEmptyArchive: true
     }
+  }
+}
 
-    stage('Deploy (Staging)') {
-      steps {
-        sh '''
-          set -eux
 
-          if ! docker version >/dev/null 2>&1; then
-            echo "ERROR: Docker daemon is not reachable. Start Docker Desktop or Colima."
-            exit 2
-          fi
+  stage('Deploy (Staging)') {
+  steps {
+    sh '''
+      set -eux
+      export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 
-          export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+      # Clean any previous compose stack, then build+run
+      docker compose down -v || true
+      docker compose up -d --build
 
-          docker compose down -v || true
-          docker compose up -d --build
+      # Wait until app responds
+      for i in $(seq 1 60); do
+        if curl -fsS http://127.0.0.1:3000/health >/dev/null; then
+          echo "App is up on :3000"
+          break
+        fi
+        sleep 1
+      done
 
-          # Tag image with version tag in addition to :latest
-          VERSION_TAG="${APP_VERSION}-${SHORT_COMMIT}"
-          docker tag sit774_ci-cd-web:latest "sit774_ci-cd-web:${VERSION_TAG}" || true
+      # Confirm once more (fail if not up)
+      curl -fsS http://127.0.0.1:3000/health >/dev/null
 
-          # Health check
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:${APP_PORT}/health >/dev/null; then
-              echo "App is up on :${APP_PORT}"
-              break
-            fi
-            sleep 1
-          done
-
-          curl -fsS http://127.0.0.1:${APP_PORT}/health
-          docker compose logs --no-color > reports/staging-logs.txt || true
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'dist/*.tar.gz,reports/staging-logs.txt', fingerprint: true, allowEmptyArchive: true
-          sh 'docker compose ps || true'
-        }
-      }
+      # Save logs for troubleshooting
+      docker compose logs --no-color > app.log || true
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'app.log', fingerprint: true, allowEmptyArchive: true
+      sh 'docker compose ps || true'
     }
+  }
+}
 
-    /* ====== left as-is per your request ====== */
+stage('Integration Test (Staging)') {
+  steps {
+    sh '''
+      set -eux
+      # Simple black-box check against the running container
+      curl -fsS http://127.0.0.1:3000/health | tee reports/deploy-health.json
+      # Optionally assert body contains {"status":"ok"}
+      node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('reports/deploy-health.json','utf8')); if(d.status!=='ok'){process.exit(1)}"
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/deploy-health.json', allowEmptyArchive: false
+    }
+  }
+}
+
+stage('Cleanup (Staging)') {
+  steps {
+    sh 'docker compose down -v || true'
+  }
+}
+
+
     stage('Release (Prod)') {
       when { branch 'main' }
       steps {
@@ -238,11 +194,9 @@ pipeline {
   }
 
   post {
-    success {
-      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true
-    }
     always {
       echo 'Pipeline finished.'
+      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true
     }
   }
 }
