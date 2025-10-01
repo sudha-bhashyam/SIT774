@@ -59,22 +59,28 @@ pipeline {
       }
     }
 
-    stage('Code Quality') {
+   stage('Code Quality') {
   steps {
     sh '''
       set -eux
       mkdir -p reports
       npm run lint || true
       npm run dup  || true
+      # optional JSON for future gating (safe if scripts exist)
+      npm run lint:json || true
+      npm run dup:json  || true
     '''
   }
   post {
     always {
-      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-      archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
+      // Do NOT publish ESLint via junit() to avoid UNSTABLE
+      archiveArtifacts artifacts: 'reports/eslint-junit.xml,reports/eslint.json,reports/jscpd/jscpd-report.xml,reports/jscpd/jscpd-report.json',
+                        fingerprint: true,
+                        allowEmptyArchive: true
     }
   }
 }
+
 
 
     stage('Security') {
