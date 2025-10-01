@@ -3,7 +3,6 @@ pipeline {
 
   options {
     timestamps()
-    ansiColor('xterm')
     buildDiscarder(logRotator(numToKeepStr: '20'))
     disableConcurrentBuilds()
   }
@@ -14,23 +13,13 @@ pipeline {
   }
 
   environment {
-    // Git / Node
     CI = 'true'
-    // Docker registry settings (override in Jenkins -> Configure -> Pipeline Env)
     DOCKER_REGISTRY   = "${env.DOCKER_REGISTRY ?: 'docker.io'}"
     DOCKER_NAMESPACE  = "${env.DOCKER_NAMESPACE ?: 'library'}"
     DOCKER_IMAGE_NAME = 'sit774_ci-cd-web'
     DOCKER_IMAGE_FULL = "${env.DOCKER_REGISTRY}/${env.DOCKER_NAMESPACE}/${env.DOCKER_IMAGE_NAME}:latest"
-
-    // Alerts
     ALERT_EMAIL = "${env.ALERT_EMAIL ?: ''}"
-    // Common dirs
     REPORTS_DIR = 'reports'
-  }
-
-  triggers {
-    // Uncomment if you want SCM polling
-    // pollSCM('* * * * *')
   }
 
   stages {
@@ -102,15 +91,12 @@ pipeline {
           mkdir -p reports
           rm -f reports/quality-gate.*
 
-          # ESLint
           npm run lint || true
           npm run lint:json || true
 
-          # Duplication (jscpd)
           npm run dup || true
           npm run dup:json || true
 
-          # Apply gates (uses tools/quality-gates.js already in repo)
           node tools/quality-gates.js
         '''
       }
@@ -118,7 +104,6 @@ pipeline {
         always {
           junit allowEmptyResults: true, testResults: 'reports/**/*.xml'
           archiveArtifacts artifacts: 'reports/**', fingerprint: true
-          script { echo 'Code Quality done.' }
         }
       }
     }
@@ -129,18 +114,15 @@ pipeline {
           set -eux
           mkdir -p reports
 
-          # Dependency scans
-          npm run sec_audit || true         # writes reports/npm-audit.json
-          npm run sec_retire || true        # writes reports/retire.json
+          npm run sec_audit || true
+          npm run sec_retire || true
 
-          # OPTIONAL: Container image scan with Trivy if installed
           if command -v trivy >/dev/null 2>&1; then
-            echo "Trivy found, scanning image (will build later)."
+            echo "Trivy found (optional image scan can be added)."
           else
-            echo "Trivy not installed, skipping image scan."
+            echo "Trivy not installed; skipping image scan."
           fi
 
-          # Summarize + (optionally) fail on HIGH/CRITICAL
           node tools/security-summary.js ${params.FAIL_ON_HIGH_OR_CRIT ? '--failOnHighOrCritical=true' : ''}
           echo "Security summary written to reports/security-summary.md | failOnHighOrCritical = ${params.FAIL_ON_HIGH_OR_CRIT}"
         '''
@@ -161,7 +143,6 @@ pipeline {
           docker compose down -v || true
           docker compose up -d --build
 
-          # Wait until /health is up
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:3000/health >/dev/null; then
               echo "App is up on :3000"
@@ -174,11 +155,7 @@ pipeline {
             fi
           done
 
-          # Save logs (useful for report)
           docker compose logs --no-color > reports/staging-logs.txt || true
-
-          # Build/tag a local image for later release step
-          # (compose already built :latest)
           docker image inspect ${DOCKER_IMAGE_NAME}:latest >/dev/null
         '''
       }
@@ -218,8 +195,8 @@ pipeline {
       when {
         allOf {
           anyOf {
-            branch 'main'       // prefer main for real submissions
-            branch 'ci-cd'      // keep during testing; remove later if desired
+            branch 'main'
+            branch 'ci-cd'   // keep for testing; remove later if you want main-only
           }
           expression { return params.PROMOTE_TO_PROD }
         }
@@ -234,13 +211,11 @@ pipeline {
 
             echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin "${DOCKER_REGISTRY}"
 
-            # Tag and push
             docker tag "${IMAGE}" "${REG}/${DOCKER_IMAGE_NAME}:${SHORT_COMMIT}"
             docker tag "${IMAGE}" "${REG}/${DOCKER_IMAGE_NAME}:latest"
             docker push "${REG}/${DOCKER_IMAGE_NAME}:${SHORT_COMMIT}"
             docker push "${REG}/${DOCKER_IMAGE_NAME}:latest"
 
-            # Minimal prod deploy using a separate compose file/port
             cat > docker-compose.prod.yml <<'YAML'
 services:
   web:
@@ -259,7 +234,6 @@ YAML
             docker compose -f docker-compose.prod.yml down -v || true
             docker compose -f docker-compose.prod.yml up -d
 
-            # Wait for prod health
             for i in $(seq 1 60); do
               if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
                 echo "Prod is up on :8080"
@@ -287,11 +261,9 @@ YAML
           set -eux
           mkdir -p reports
 
-          # Simple uptime probe against PROD (acts as basic monitoring)
           STATUS=$(curl -fsS http://127.0.0.1:8080/health || true)
           echo "$STATUS" | tee reports/prod-health.json || true
 
-          # If prod unhealthy, mark UNSTABLE and (best effort) email
           node -e "
             const fs=require('fs');
             let ok=false;
@@ -299,7 +271,6 @@ YAML
             if(!ok){ process.exit(2) }
           " || (
             echo 'Prod health check failed; marking UNSTABLE' >&2;
-            # Try to send a very simple mail if 'mail' exists and ALERT_EMAIL provided
             if [ -n \\"${ALERT_EMAIL}\\" ] && command -v mail >/dev/null 2>&1; then
               echo 'SIT774 prod health check failed on Jenkins' | mail -s 'SIT774 ALERT: prod unhealthy' "${ALERT_EMAIL}" || true
             fi
@@ -313,23 +284,16 @@ YAML
         }
       }
     }
-  } // stages
+  }
 
   post {
     always {
-      // Ensure test reports are picked even if some stages skipped
       junit allowEmptyResults: true, testResults: 'reports/**/*.xml'
       archiveArtifacts artifacts: 'reports/**,dist/**', fingerprint: true
       echo 'Pipeline finished.'
     }
-    success {
-      echo '✅ SUCCESS'
-    }
-    unstable {
-      echo '⚠️ UNSTABLE (check gates/monitoring results and test reports)'
-    }
-    failure {
-      echo '❌ FAILURE'
-    }
+    success {  echo '✅ SUCCESS' }
+    unstable { echo '⚠️ UNSTABLE (check gates/monitoring results and test reports)' }
+    failure {  echo '❌ FAILURE' }
   }
 }
