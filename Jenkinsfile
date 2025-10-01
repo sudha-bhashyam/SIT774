@@ -1,34 +1,14 @@
 pipeline {
   agent any
-
-  options {
-    timestamps()
-    ansiColor('xterm')
-  }
-
-  parameters {
-    booleanParam(name: 'RELEASE_PROD', defaultValue: false, description: 'Promote build to Production (Release stage)')
-  }
-
+  options { skipDefaultCheckout(true); timestamps() }
   environment {
-    NODE_ENV = 'ci'
-    // image/repo names kept local like your logs
-    DOCKER_IMAGE = 'sit774_ci-cd-web:latest'
-    APP_PORT     = '3000'
+    PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
   }
-
   stages {
-
     stage('Checkout') {
       steps {
-        checkout([$class: 'GitSCM',
-          branches: [[name: '*/ci-cd']],
-          userRemoteConfigs: [[
-            url: 'https://github.com/sudha-bhashyam/SIT774.git',
-            credentialsId: 'github-creds'
-          ]]
-        ])
-        echo "Checked out ${env.BRANCH_NAME ?: 'ci-cd'} @ ${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+        checkout scm
+        echo "Checked out ${env.BRANCH_NAME} @ ${env.GIT_COMMIT}"
       }
     }
 
@@ -38,12 +18,20 @@ pipeline {
           set -eux
           node -v
           npm -v
-          [ -f package-lock.json ] && npm ci || npm i
+
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+          if npm run | grep -q "build"; then
+            npm run build
+          else
+            echo "No build script"
+          fi
+
           mkdir -p dist
           rm -rf .pack && mkdir .pack
-          rsync -a --exclude .git --exclude dist --exclude node_modules . .pack/
-          SHORT_COMMIT=$(git rev-parse --short HEAD)
-          TAR="dist/sit774-nodeapp-$SHORT_COMMIT.tar.gz"
+          rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
+          SHORT_COMMIT=$(git rev-parse --short HEAD || echo local)
+          TAR="dist/sit774-nodeapp-${SHORT_COMMIT}.tar.gz"
           tar -czf "$TAR" -C .pack .
           echo "Built artefact: $TAR"
         '''
@@ -51,49 +39,42 @@ pipeline {
     }
 
     stage('Test') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          export JEST_JUNIT_OUTPUT_DIR=reports
-          export JEST_JUNIT_OUTPUT_NAME=junit.xml
-          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
-        '''
-      }
-      post {
-        always {
-          junit testResults: 'reports/junit.xml', allowEmptyResults: false
-        }
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      export JEST_JUNIT_OUTPUT_DIR=reports
+      export JEST_JUNIT_OUTPUT_NAME=junit.xml
+      npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
+    '''
+  }
+  post {
+    always {
+      junit 'reports/*.xml'
     }
+  }
+}
 
     stage('Code Quality') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          rm -f reports/quality-gate.*
-          npm run lint || true
-          npm run lint:json || true
-          npm run dup || true
-          npm run dup:json || true
-          node tools/quality-gates.js
-        '''
-      }
-      post {
-        always {
-          junit testResults: 'reports/eslint-junit.xml', allowEmptyResults: true
-          archiveArtifacts artifacts: 'reports/jscpd/**,reports/eslint.json,dist/**', fingerprint: true, onlyIfSuccessful: false
-          script {
-            if (!fileExists('reports/quality-gate.status')) {
-              echo 'No gate status file, assuming PASS.'
-            }
-          }
-        }
-      }
+   stage('Code Quality') {
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      npm run lint
+      npm run dup || true
+    '''
+  }
+  post {
+    always {
+      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
     }
+    junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
 
-    stage('Security') {
+    archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
+  }
+}
+stage('Security') {
       steps {
         sh '''
           set -eux
@@ -113,7 +94,7 @@ pipeline {
       }
     }
 
-    stage('Deploy (Staging)') {
+   stage('Deploy (Staging)') {
       steps {
         sh '''
           set -eux
@@ -164,41 +145,24 @@ pipeline {
     }
 
     stage('Release (Prod)') {
-      when {
-        expression { params.RELEASE_PROD == true }
-      }
+      when { branch 'main' }
       steps {
-        echo 'Promoting to Production...'
-        // Example: tag image, push, or run docker compose -f docker-compose.prod.yml up -d
-        sh '''
-          set -eux
-          SHORT_COMMIT=$(git rev-parse --short HEAD)
-          echo "Would tag & release artefact for commit $SHORT_COMMIT"
-        '''
+        echo 'Release'
       }
     }
 
     stage('Monitoring & Alerts') {
       steps {
         echo 'Monitoring'
-        // Lightweight demo monitoring: fetch /health and store result
-        sh '''
-          set -eux
-          echo '{"checks":[{"endpoint":"/health","result":"ok"}]}' > reports/monitoring.json
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'reports/monitoring.json', fingerprint: true
-        }
       }
     }
   }
-
   post {
+    success {
+      archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true
+    }
     always {
       echo 'Pipeline finished.'
-      archiveArtifacts artifacts: 'dist/**,reports/**', fingerprint: true
     }
   }
 }
