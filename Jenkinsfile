@@ -3,10 +3,9 @@ pipeline {
   options { skipDefaultCheckout(true); timestamps() }
 
   environment {
+    // Just static env here; no shell commands!
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     APP_PORT = '3000'
-    // Pull version from package.json (fallback to 0.0.0 if missing)
-    APP_VERSION = sh(script: "node -p \"try{require('./package.json').version}catch(e){'0.0.0'}\"", returnStdout: true).trim()
   }
 
   stages {
@@ -23,28 +22,42 @@ pipeline {
         sh '''
           set -eux
 
+          # Ensure Node is available (PATH from environment now applies)
           node -v
           npm -v
 
+          # Install deps
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-          # Optional project build step (if present)
+          # Discover app version from package.json (fallback to 0.0.0)
+          APP_VERSION=$(node -p "try{require('./package.json').version}catch(e){'0.0.0'}")
+          echo "APP_VERSION=$APP_VERSION" > .buildenv
+
+          # Optional build
           if npm run | grep -qE '^\\s*build\\s'; then
             npm run build
           else
             echo "No build script"
           fi
 
-          # Create a versioned artefact tarball
+          # Create versioned artefact
           mkdir -p dist
           rm -rf .pack && mkdir .pack
           rsync -a --exclude ".git" --exclude "dist" --exclude "node_modules" . .pack/
           SHORT_COMMIT=$(git rev-parse --short HEAD || echo local)
+          echo "SHORT_COMMIT=$SHORT_COMMIT" >> .buildenv
           VERSION_TAG="${APP_VERSION}-${SHORT_COMMIT}"
           TAR="dist/sit774-nodeapp-${VERSION_TAG}.tar.gz"
           tar -czf "$TAR" -C .pack .
           echo "Built artefact: $TAR"
         '''
+        script {
+          // Load computed values into env.* for later stages
+          def m = readProperties file: '.buildenv'
+          env.APP_VERSION = m.APP_VERSION ?: '0.0.0'
+          env.SHORT_COMMIT = m.SHORT_COMMIT ?: 'local'
+          env.VERSION_TAG  = "${env.APP_VERSION}-${env.SHORT_COMMIT}"
+        }
       }
     }
 
@@ -57,7 +70,6 @@ pipeline {
           export JEST_JUNIT_OUTPUT_DIR=reports
           export JEST_JUNIT_OUTPUT_NAME=junit.xml
 
-          # Run unit tests with coverage
           npx jest --ci --reporters=default --reporters=jest-junit --coverage --coverageReporters=json-summary,text-summary
 
           # Gate on coverage >= 80% (statements)
@@ -70,7 +82,7 @@ pipeline {
       }
       post {
         always {
-          junit 'reports/junit.xml'   // only real test results here
+          junit 'reports/junit.xml'   // only unit tests
           archiveArtifacts artifacts: 'coverage/**', fingerprint: true, allowEmptyArchive: true
         }
       }
@@ -82,17 +94,16 @@ pipeline {
           set -eux
           mkdir -p reports
 
-          # ESLint to JSON
+          # ESLint JSON (+ optional JUnit for humans)
           npx eslint . --ext .js -f json -o reports/eslint.json || true
-          # (Optional) also emit JUnit for human viewing; do NOT publish with junit()
           npx eslint . --ext .js --format junit -o reports/eslint-junit.xml || true
 
-          # jscpd duplication (JSON)
+          # Duplication (JSON)
           npx jscpd --pattern "**/*.js" \
             --ignore "**/node_modules/**,**/dist/**,**/.pack/**,**/reports/**" \
             --reporters json --output reports/jscpd || true
 
-          # Gate: ESLint errors == 0, warnings <= 20; jscpd duplication <= 2.0%
+          # Quality gate: errors=0, warnings<=20, duplication<=2%
           node -e " \
             const fs=require('fs'); \
             const es=JSON.parse(fs.readFileSync('reports/eslint.json','utf8')); \
@@ -104,7 +115,7 @@ pipeline {
             try{ \
               const j=JSON.parse(fs.readFileSync('reports/jscpd/jscpd-report.json','utf8')); \
               dupPct=(j?.statistics?.percentage)||0; \
-            }catch(e){console.log('No jscpd JSON found; assuming 0%');} \
+            }catch(e){ console.log('No jscpd JSON found; assuming 0%'); } \
             console.log('Duplication %:', dupPct); \
             if (errs>0 || warns>20 || dupPct>2) { \
               console.error('Quality gate failed: ESLint errors>0 or warnings>20 or duplication>2%'); \
@@ -125,7 +136,6 @@ pipeline {
           set -eux
           mkdir -p reports
 
-          # Dependency scans
           npm audit --omit=dev --json > reports/npm-audit.json || true
           npx retire --path . --outputformat json --outputpath reports/retire.json || true
 
@@ -177,7 +187,6 @@ pipeline {
         sh '''
           set -eux
 
-          # Verify Docker is reachable (nice error if not)
           if ! docker version >/dev/null 2>&1; then
             echo "ERROR: Docker daemon is not reachable. Start Docker Desktop or Colima."
             exit 2
@@ -185,16 +194,14 @@ pipeline {
 
           export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 
-          # Build via compose (keeps your existing behavior)
           docker compose down -v || true
           docker compose up -d --build
 
-          # Tag the compose-built image with a versioned tag (in addition to :latest)
-          SHORT_COMMIT=$(git rev-parse --short HEAD || echo local)
+          # Tag image with version tag in addition to :latest
           VERSION_TAG="${APP_VERSION}-${SHORT_COMMIT}"
-          docker tag sit774_ci-cd-web:latest sit774_ci-cd-web:${VERSION_TAG} || true
+          docker tag sit774_ci-cd-web:latest "sit774_ci-cd-web:${VERSION_TAG}" || true
 
-          # Health wait loop
+          # Health check
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:${APP_PORT}/health >/dev/null; then
               echo "App is up on :${APP_PORT}"
@@ -215,8 +222,7 @@ pipeline {
       }
     }
 
-    /* ======= LEAVE THESE STAGES AS-IS PER YOUR REQUEST ======= */
-
+    /* ====== left as-is per your request ====== */
     stage('Release (Prod)') {
       when { branch 'main' }
       steps {
