@@ -1,15 +1,18 @@
 pipeline {
   agent any
   options { skipDefaultCheckout(true); timestamps() }
+
   environment {
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     APP_PORT = '3000'
   }
+
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
-        echo "Checked out ${env.BRANCH_NAME} @ ${env.GIT_COMMIT}"
+        echo "Checked out ${env.BRANCH_NAME} @ ${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
       }
     }
 
@@ -40,18 +43,6 @@ pipeline {
     }
 
     stage('Test') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      export JEST_JUNIT_OUTPUT_DIR=reports
-      export JEST_JUNIT_OUTPUT_NAME=junit.xml
-      npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
-    '''
-  }
-  post {
-    always {
-      junit 'reports/*.xml'
       steps {
         sh '''
           set -eux
@@ -67,22 +58,8 @@ pipeline {
         }
       }
     }
-  }
-}
 
     stage('Code Quality') {
-   stage('Code Quality') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      npm run lint
-      npm run dup || true
-    '''
-  }
-  post {
-    always {
-      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
       steps {
         sh '''
           set -eux
@@ -98,12 +75,7 @@ pipeline {
         }
       }
     }
-    junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
 
-    archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
-  }
-}
-stage('Security') {
     stage('Security') {
       steps {
         sh '''
@@ -117,14 +89,13 @@ stage('Security') {
       }
       post {
         always {
-          archiveArtifacts artifacts: 'reports/npm-audit.json', fingerprint: true
-          archiveArtifacts artifacts: 'reports/retire.json', fingerprint: true
-          archiveArtifacts artifacts: 'reports/security-summary.md', fingerprint: true
+          archiveArtifacts artifacts: 'reports/npm-audit.json', fingerprint: true, allowEmptyArchive: true
+          archiveArtifacts artifacts: 'reports/retire.json', fingerprint: true, allowEmptyArchive: true
+          archiveArtifacts artifacts: 'reports/security-summary.md', fingerprint: true, allowEmptyArchive: true
         }
       }
     }
 
-   stage('Deploy (Staging)') {
     stage('Deploy (Staging)') {
       steps {
         sh '''
@@ -188,6 +159,7 @@ stage('Security') {
       }
     }
   }
+
   post {
     success {
       archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true, onlyIfSuccessful: true
