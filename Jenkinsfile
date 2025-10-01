@@ -60,23 +60,22 @@ pipeline {
     }
 
     stage('Code Quality') {
-      steps {
-        sh '''
-          set -eux
-          mkdir -p reports
-          # Produce ESLint JUnit/JSON as your earlier jobs did
-          eslint . --ext .js --format junit -o reports/eslint-junit.xml || true
-          # jscpd duplication
-          jscpd --pattern "**/*.js" --ignore "**/node_modules/**,**/dist/**,**/.pack/**,**/reports/**" --reporters xml --output reports/jscpd || true
-        '''
-      }
-      post {
-        always {
-          junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
-          archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
-        }
-      }
+  steps {
+    sh '''
+      set -eux
+      mkdir -p reports
+      npm run lint || true
+      npm run dup  || true
+    '''
+  }
+  post {
+    always {
+      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+      archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
     }
+  }
+}
+
 
     stage('Security') {
       steps {
