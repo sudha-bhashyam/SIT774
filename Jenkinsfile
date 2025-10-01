@@ -53,10 +53,10 @@ pipeline {
         '''
       }
       post {
-        always {
-          junit 'reports/*.xml'
-        }
-      }
+  always {
+    junit testResults: 'reports/junit.xml', allowEmptyResults: false
+  }
+}
     }
 
    stage('Code Quality') {
@@ -73,7 +73,6 @@ pipeline {
   }
   post {
     always {
-      // Do NOT publish ESLint via junit() to avoid UNSTABLE
       archiveArtifacts artifacts: 'reports/eslint-junit.xml,reports/eslint.json,reports/jscpd/jscpd-report.xml,reports/jscpd/jscpd-report.json',
                         fingerprint: true,
                         allowEmptyArchive: true
