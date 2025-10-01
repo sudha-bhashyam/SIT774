@@ -3,6 +3,7 @@ pipeline {
   options { skipDefaultCheckout(true); timestamps() }
   environment {
     PATH = "/opt/homebrew/opt/node@18/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
+    APP_PORT = '3000'
   }
   stages {
     stage('Checkout') {
@@ -39,42 +40,40 @@ pipeline {
     }
 
     stage('Test') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      export JEST_JUNIT_OUTPUT_DIR=reports
-      export JEST_JUNIT_OUTPUT_NAME=junit.xml
-      npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
-    '''
-  }
-  post {
-    always {
-      junit 'reports/*.xml'
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          export JEST_JUNIT_OUTPUT_DIR=reports
+          export JEST_JUNIT_OUTPUT_NAME=junit.xml
+          npx jest --ci --reporters=default --reporters=jest-junit --testPathPattern="__tests__/smoke\\.test\\.js$"
+        '''
+      }
+      post {
+        always {
+          junit 'reports/*.xml'
+        }
+      }
     }
-  }
-}
 
     stage('Code Quality') {
-   stage('Code Quality') {
-  steps {
-    sh '''
-      set -eux
-      mkdir -p reports
-      npm run lint
-      npm run dup || true
-    '''
-  }
-  post {
-    always {
-      junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+      steps {
+        sh '''
+          set -eux
+          mkdir -p reports
+          npm run lint || true
+          npm run dup || true
+        '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
+          archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
+        }
+      }
     }
-    junit allowEmptyResults: true, testResults: 'reports/eslint-junit.xml'
 
-    archiveArtifacts artifacts: 'reports/jscpd/jscpd-report.xml', fingerprint: true, allowEmptyArchive: true
-  }
-}
-stage('Security') {
+    stage('Security') {
       steps {
         sh '''
           set -eux
@@ -94,7 +93,7 @@ stage('Security') {
       }
     }
 
-   stage('Deploy (Staging)') {
+    stage('Deploy (Staging)') {
       steps {
         sh '''
           set -eux
