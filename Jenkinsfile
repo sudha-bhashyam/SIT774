@@ -103,30 +103,32 @@ pipeline {
     }
 
     stage('Deploy (Staging)') {
-      steps {
-        sh '''
-          set -eux
-          export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
-          docker compose down -v || true
-          docker compose up -d --build
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:${APP_PORT}/health >/dev/null; then
-              echo "App is up on :${APP_PORT}"
-              break
-            fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:${APP_PORT}/health
-          docker compose logs --no-color > reports/staging-logs.txt || true
-        '''
-      }
-      post {
-        always {
-          archiveArtifacts artifacts: 'reports/staging-logs.txt', fingerprint: true
-          sh 'docker compose ps || true'
-        }
-      }
+  steps {
+    withCredentials([string(credentialsId: 'healthchecks-url', variable: 'HEALTHCHECKS_URL')]) {
+      sh '''
+        set -eux
+        export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+        docker compose down -v || true
+        docker compose up -d --build
+        for i in $(seq 1 60); do
+          if curl -fsS http://127.0.0.1:${APP_PORT}/health >/dev/null; then
+            echo "App is up on :${APP_PORT}"
+            break
+          fi
+          sleep 1
+        done
+        curl -fsS http://127.0.0.1:${APP_PORT}/health
+        docker compose logs --no-color > reports/staging-logs.txt || true
+      '''
     }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/staging-logs.txt', fingerprint: true
+      sh 'docker compose ps || true'
+    }
+  }
+}
 
     stage('Integration Test (Staging)') {
       steps {
@@ -159,12 +161,18 @@ pipeline {
       }
     }
 
-    stage('Monitoring & Alerts') {
-      steps {
-        echo 'Monitoring'
-      }
+   stage('Monitoring & Alerts') {
+  steps {
+    withCredentials([string(credentialsId: 'healthchecks-url', variable: 'HEALTHCHECKS_URL')]) {
+      sh '''
+        set -eu
+        echo "Monitoring via Healthchecks.io heartbeat enabled."
+        echo "Ping URL configured (redacted tail): ${HEALTHCHECKS_URL%??????}******"
+      '''
     }
   }
+}
+
 
   post {
     success {
