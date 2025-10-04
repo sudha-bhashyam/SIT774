@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   web:
     build: .
@@ -5,11 +7,11 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-     - HEALTHCHECKS_URL=${HEALTHCHECKS_URL} 
+      - HEALTHCHECKS_URL=${HEALTHCHECKS_URL:-}
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 2s
       retries: 12
-      start_period: 2s
+      start_period: 5s
 
