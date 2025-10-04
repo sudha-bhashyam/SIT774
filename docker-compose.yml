@@ -5,9 +5,11 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - HEALTHCHECKS_URL=${https://hc-ping.com/fb9552f6-70fb-4417-808c-b0702e0b5463}
     healthcheck:
       test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 2s
       retries: 12
       start_period: 2s
+
